@@ -1,6 +1,7 @@
 package retry
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRetryMiddleware(t *testing.T) {
+func TestNewRetryMiddleware(t *testing.T) {
 	t.Parallel()
 
 	retryForNotSuccessResp := func(_ *http.Request, resp *http.Response, _ error) bool {
@@ -135,7 +136,7 @@ func TestRetryMiddleware(t *testing.T) {
 
 			cli := goclient.NewClient(
 				goclient.WithMiddlewares(
-					RetryMiddleware(test.maxRetries, test.shouldRetry, test.calculator),
+					NewRetryMiddleware(test.maxRetries, test.shouldRetry, test.calculator),
 				),
 			)
 
@@ -145,6 +146,36 @@ func TestRetryMiddleware(t *testing.T) {
 			assert.Equal(t, test.wantRespStatus, resp.StatusCode)
 			assert.NoError(t, err)
 			assert.Equal(t, test.wantCallCount, callCount)
+		})
+	}
+}
+
+func TestRetryForError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		result bool
+	}{
+		{
+			name:   "happy flow: error is nil",
+			err:    nil,
+			result: false,
+		},
+		{
+			name:   "happy flow: error is not nil",
+			err:    errors.New("test error"),
+			result: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := RetryForError(nil, nil, test.err)
+			assert.Equal(t, test.result, result)
 		})
 	}
 }

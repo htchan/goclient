@@ -7,7 +7,7 @@ import (
 	"github.com/htchan/goclient"
 )
 
-func RetryMiddleware(
+func NewRetryMiddleware(
 	maxRetries int,
 	shouldRetry goclient.ResultValidator,
 	sleepDuration RetryIntervalCalculator,
@@ -36,4 +36,8 @@ func RetryMiddleware(
 			return resp, err
 		}
 	}
+}
+
+func RetryForError(_ *http.Request, _ *http.Response, err error) bool {
+	return err != nil
 }
