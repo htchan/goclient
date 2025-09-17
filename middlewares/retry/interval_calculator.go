@@ -15,12 +15,12 @@ func StaticRetryInterval(interval time.Duration) RetryIntervalCalculator {
 
 func LinearRetryInterval(interval time.Duration) RetryIntervalCalculator {
 	return func(i int, _ *http.Request, _ *http.Response) time.Duration {
-		return interval * time.Duration(i)
+		return interval * time.Duration(i+1)
 	}
 }
 
 func ExponentialRetryInterval(interval time.Duration) RetryIntervalCalculator {
 	return func(i int, _ *http.Request, _ *http.Response) time.Duration {
-		return interval * time.Duration(i*i)
+		return interval * time.Duration((i+1)*(i+1))
 	}
 }
