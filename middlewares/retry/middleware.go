@@ -29,6 +29,9 @@ func NewRetryMiddleware(
 				if !shouldRetry || i == maxRetries-1 { // no need to sleep for last trial
 					break
 				}
+				if resp != nil {
+					resp.Body.Close()
+				}
 
 				time.Sleep(sleepDuration(i, req, resp))
 			}
