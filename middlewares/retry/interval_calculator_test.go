@@ -104,13 +104,13 @@ func TestLinearRetryInterval(t *testing.T) {
 				req:  nil,
 				resp: nil,
 			},
-			want: 0 * time.Second,
+			want: 1 * time.Second,
 		},
 		{
-			name:     "happy flow: i = 100",
+			name:     "happy flow: i = 99",
 			interval: time.Second,
 			input: input{
-				i:    100,
+				i:    99,
 				req:  nil,
 				resp: nil,
 			},
@@ -120,7 +120,7 @@ func TestLinearRetryInterval(t *testing.T) {
 			name:     "happy flow: not affected by req",
 			interval: time.Second,
 			input: input{
-				i: 5,
+				i: 4,
 				req: &http.Request{
 					Method: "GET",
 					URL:    nil,
@@ -136,7 +136,7 @@ func TestLinearRetryInterval(t *testing.T) {
 			name:     "happy flow: not affected by resp",
 			interval: time.Second,
 			input: input{
-				i:   5,
+				i:   4,
 				req: nil,
 				resp: &http.Response{
 					StatusCode: 200,
@@ -177,13 +177,13 @@ func TestExponentialRetryInterval(t *testing.T) {
 				req:  nil,
 				resp: nil,
 			},
-			want: 0 * time.Second,
+			want: 1 * time.Second,
 		},
 		{
-			name:     "happy flow: i = 100",
+			name:     "happy flow: i = 4",
 			interval: time.Second,
 			input: input{
-				i:    5,
+				i:    4,
 				req:  nil,
 				resp: nil,
 			},
@@ -193,7 +193,7 @@ func TestExponentialRetryInterval(t *testing.T) {
 			name:     "happy flow: not affected by req",
 			interval: time.Second,
 			input: input{
-				i: 5,
+				i: 4,
 				req: &http.Request{
 					Method: "GET",
 					URL:    nil,
@@ -209,7 +209,7 @@ func TestExponentialRetryInterval(t *testing.T) {
 			name:     "happy flow: not affected by resp",
 			interval: time.Second,
 			input: input{
-				i:   5,
+				i:   4,
 				req: nil,
 				resp: &http.Response{
 					StatusCode: 200,
