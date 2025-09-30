@@ -122,6 +122,8 @@ func TestClientPoolImpl_GetClient(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			start := time.Now()
+
 			mu := new(sync.Mutex)
 			pool := &clientPoolImpl{
 				mutex: mu,
@@ -132,6 +134,7 @@ func TestClientPoolImpl_GetClient(t *testing.T) {
 			gotClient := pool.GetClient(&http.Request{})
 			assert.Equal(t, tt.wantClient, gotClient)
 			assert.Equal(t, tt.wantPoolClients, pool.clients)
+			assert.GreaterOrEqual(t, tt.wantWithinDuration, time.Since(start))
 		})
 	}
 }
