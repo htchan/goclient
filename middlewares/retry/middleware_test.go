@@ -59,7 +59,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			serverHandler:     failFirstNRequest(9),
 			wantRespStatus:    http.StatusOK,
 			wantCallCount:     10,
-			wantLeastDuration: 55 * time.Millisecond,
+			wantLeastDuration: 45 * time.Millisecond,
 		},
 		{
 			name:              "error flow: fail until reaching limit",
@@ -69,7 +69,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			serverHandler:     failFirstNRequest(10),
 			wantRespStatus:    http.StatusInternalServerError,
 			wantCallCount:     10,
-			wantLeastDuration: 55 * time.Millisecond,
+			wantLeastDuration: 45 * time.Millisecond,
 		},
 		// should retry validator
 		{
@@ -90,7 +90,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			serverHandler:     failFirstNRequest(0),
 			wantRespStatus:    http.StatusOK,
 			wantCallCount:     10,
-			wantLeastDuration: 55 * time.Millisecond,
+			wantLeastDuration: 45 * time.Millisecond,
 		},
 		// // sleep interval calculator
 		{
@@ -111,7 +111,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			serverHandler:     failFirstNRequest(10),
 			wantRespStatus:    http.StatusInternalServerError,
 			wantCallCount:     10,
-			wantLeastDuration: 55 * time.Millisecond,
+			wantLeastDuration: 45 * time.Millisecond,
 		},
 		{
 			name:              "happy flow: exponential sleep interval",
@@ -130,6 +130,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			t.Parallel()
 
 			callCount := 0
+			start := time.Now()
 
 			serv := httptest.NewServer(test.serverHandler(&callCount))
 			defer serv.Close()
@@ -146,6 +147,7 @@ func TestNewRetryMiddleware(t *testing.T) {
 			assert.Equal(t, test.wantRespStatus, resp.StatusCode)
 			assert.NoError(t, err)
 			assert.Equal(t, test.wantCallCount, callCount)
+			assert.LessOrEqual(t, test.wantLeastDuration, time.Since(start))
 		})
 	}
 }
