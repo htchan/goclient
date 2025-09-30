@@ -10,6 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func getClients(p *clientPoolImpl) []*http.Client {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	return p.clients
+}
+
 func TestNewRequestRecorderAlwaysAddClientBack(t *testing.T) {
 	t.Parallel()
 
@@ -38,9 +45,9 @@ func TestNewRequestRecorderAlwaysAddClientBack(t *testing.T) {
 			cli := http.DefaultClient
 
 			requestRecorder(&pool, cli, nil, nil, nil)
-			assert.Equal(t, []*http.Client{}, pool.clients) // because of cooldown
+			assert.Equal(t, []*http.Client{}, getClients(&pool)) // because of cooldown
 			time.Sleep(tt.cooldownInterval + 50*time.Millisecond)
-			assert.Equal(t, tt.wantClients, pool.clients)
+			assert.Equal(t, tt.wantClients, getClients(&pool))
 		})
 	}
 }
@@ -110,9 +117,9 @@ func TestNewRequestRecorderDropClientForContinueFailed(t *testing.T) {
 			cli := http.DefaultClient
 
 			requestRecorder(&pool, cli, nil, nil, nil)
-			assert.Equal(t, []*http.Client{}, pool.clients) // because of cooldown
+			assert.Equal(t, []*http.Client{}, getClients(&pool)) // because of cooldown
 			time.Sleep(tt.wantCooldownInterval)
-			assert.Equal(t, tt.wantClients, pool.clients)
+			assert.Equal(t, tt.wantClients, getClients(&pool))
 		})
 	}
 }
