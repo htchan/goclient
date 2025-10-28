@@ -18,7 +18,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 	refTimeExpired := refTimeNow.AddDate(-1, 0, 0)
 	refTimeFuture := refTimeNow.AddDate(1, 0, 0)
 	refTimeAlmostExpired := refTimeNow.Add(1000 * time.Millisecond)
-	refTimeResultFromAlmostExpired := refTimeAlmostExpired.Add(10 * time.Minute)
+	refTimeResultLater := refTimeAlmostExpired.Add(10 * time.Minute)
 
 	tests := []struct {
 		name              string
@@ -70,7 +70,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 			interval:      10 * time.Minute,
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {},
 			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResultFromAlmostExpired, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+				queue:      []*time.Time{&refTimeResultLater, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
 				startIndex: 2,
 				count:      4,
 				size:       5,
@@ -90,7 +90,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 				time.Sleep(1000 * time.Millisecond)
 			},
 			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResultFromAlmostExpired, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+				queue:      []*time.Time{&refTimeResultLater, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
 				startIndex: 2,
 				count:      4,
 				size:       5,
