@@ -1,6 +1,7 @@
 package retry
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -34,6 +35,15 @@ func NewRetryMiddleware(
 				}
 
 				time.Sleep(sleepDuration(i, req, resp))
+
+				// reset request body for next retry attempt
+				if req.Body != nil && req.GetBody != nil {
+					body, bodyErr := req.GetBody()
+					if bodyErr != nil {
+						return nil, fmt.Errorf("retry: failed to reset request body: %w", bodyErr)
+					}
+					req.Body = body
+				}
 			}
 
 			return resp, err
