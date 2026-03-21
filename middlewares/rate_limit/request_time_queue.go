@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"errors"
+	"sync"
 	"time"
 )
 
@@ -10,6 +11,7 @@ var (
 )
 
 type Queue struct {
+	mu         sync.Mutex
 	queue      []*time.Time
 	startIndex int
 	count      int
@@ -26,10 +28,16 @@ func NewQueue(length int) *Queue {
 }
 
 func (q *Queue) Count() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	return q.count
 }
 
 func (q *Queue) Enqueue(t *time.Time) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	if q.count >= q.size {
 		return ErrFullQueue
 	}
@@ -41,6 +49,9 @@ func (q *Queue) Enqueue(t *time.Time) error {
 }
 
 func (q *Queue) Dequeue() *time.Time {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	if q.count == 0 {
 		return nil
 	}
@@ -52,7 +63,10 @@ func (q *Queue) Dequeue() *time.Time {
 	return item
 }
 
-func (q Queue) Item(i int) *time.Time {
+func (q *Queue) Item(i int) *time.Time {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
 	if i >= q.count || i < 0 {
 		return nil
 	}
