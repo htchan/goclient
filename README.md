@@ -1,15 +1,15 @@
 # goclient
 
-A lightweight Go HTTP client library with middleware support for retry logic, circuit breakers, and custom request handling.
+A lightweight Go HTTP client library with middleware support for retry logic, rate limiting, and custom request handling.
 
 ## Features
 
 - **Middleware Support**: Chain multiple middlewares for request / response processing
-    - **Retry Logic**: Configurable retry with custom intervals
-    - **Circuit Breaker**: Prevent cascading failures
+    - **Retry Logic**: Configurable retry with custom intervals (static, linear, exponential)
+    - **Rate Limiting**: Token-bucket style rate limiter with configurable window and queue size
 
-- **Requester Support**: Requester is the inner most function to send the request out. 
-    - **client pool**: pick client from pool to process request
+- **Requester Support**: Requester is the inner most function to send the request out.
+    - **Client Pool**: Pick client from pool to process request, with configurable failure tracking and cooldown
 
 ## Usage
 
@@ -36,13 +36,13 @@ client := goclient.NewClient(
 ```go
 import (
     "github.com/htchan/goclient/middlewares/retry"
-    "github.com/htchan/goclient/middlewares/circuitbreaker"
+    ratelimit "github.com/htchan/goclient/middlewares/rate_limit"
 )
 
 client := goclient.NewClient(
     goclient.WithMiddlewares(
-        retry.RetryMiddleware(3, shouldRetryFunc, intervalCalculator),
-        circuitbreaker.CircuitBreakerMiddleware(breaker),
+        retry.NewRetryMiddleware(3, retry.RetryForError, retry.LinearRetryInterval(time.Second)),
+        ratelimit.NewRateLimitMiddleware(ratelimit.NewQueue(10), 5*time.Second),
     ),
 )
 ```
@@ -54,9 +54,20 @@ client := goclient.NewClient(
 Automatically retries failed requests with configurable intervals.
 
 ```go
-retryMiddleware := retry.RetryMiddleware(
+retryMiddleware := retry.NewRetryMiddleware(
     maxRetries,
     shouldRetryValidator,
     intervalCalculator,
+)
+```
+
+### Rate Limit Middleware
+
+Limits request throughput using a fixed-size queue with configurable cooldown intervals.
+
+```go
+rateLimitMiddleware := ratelimit.NewRateLimitMiddleware(
+    ratelimit.NewQueue(10), // max 10 concurrent slots
+    5 * time.Second,        // cooldown interval per slot
 )
 ```
