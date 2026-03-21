@@ -39,7 +39,7 @@ func (pool *clientPoolImpl) GetClient(req *http.Request) *http.Client {
 	pool.mutex.Lock()
 	defer pool.mutex.Unlock()
 
-	if len(pool.clients) == 0 {
+	for len(pool.clients) == 0 {
 		pool.cond.Wait()
 	}
 
