@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,6 +179,75 @@ func TestRetryForError(t *testing.T) {
 
 			result := RetryForError(nil, nil, test.err)
 			assert.Equal(t, test.result, result)
+		})
+	}
+}
+
+func TestNewRetryMiddleware_BodyReplay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		maxRetries     int
+		serverHandler  func(*int) http.HandlerFunc
+		wantBody       string
+		wantCallCount  int
+		wantRespStatus int
+	}{
+		{
+			name:       "POST body is replayed on retry",
+			maxRetries: 3,
+			serverHandler: func(count *int) http.HandlerFunc {
+				*count = 0
+				return func(w http.ResponseWriter, r *http.Request) {
+					body := make([]byte, 1024)
+					n, _ := r.Body.Read(body)
+					*count++
+					if *count < 3 {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					w.Write(body[:n])
+				}
+			},
+			wantBody:       "hello world",
+			wantCallCount:  3,
+			wantRespStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			callCount := 0
+			serv := httptest.NewServer(tt.serverHandler(&callCount))
+			defer serv.Close()
+
+			cli := goclient.NewClient(
+				goclient.WithMiddlewares(
+					NewRetryMiddleware(
+						tt.maxRetries,
+						func(_ *http.Request, resp *http.Response, _ error) bool {
+							return resp != nil && resp.StatusCode != http.StatusOK
+						},
+						StaticRetryInterval(1*time.Millisecond),
+					),
+				),
+			)
+
+			req, reqErr := http.NewRequest(http.MethodPost, serv.URL, strings.NewReader(tt.wantBody))
+			assert.NoError(t, reqErr)
+
+			resp, err := cli.Do(req)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantRespStatus, resp.StatusCode)
+			assert.Equal(t, tt.wantCallCount, callCount)
+
+			respBody := make([]byte, 1024)
+			n, _ := resp.Body.Read(respBody)
+			assert.Equal(t, tt.wantBody, string(respBody[:n]))
 		})
 	}
 }
