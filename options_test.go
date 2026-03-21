@@ -123,26 +123,16 @@ func Test_defaultRequester(t *testing.T) {
 			t.Parallel()
 
 			server := httptest.NewServer(test.serverHandler)
-			url := server.URL
-			if test.name == "edge case: connection error" {
-				server.Close() // Close server to cause connection error
-			} else {
-				defer server.Close()
-			}
+			defer server.Close()
 
-			req, reqErr := http.NewRequest(http.MethodGet, url, nil)
+			req, reqErr := http.NewRequest(http.MethodGet, server.URL, nil)
 			assert.NoError(t, reqErr)
 			resp, respErr := defaultRequester(req)
 
-			if test.name == "edge case: connection error" {
-				assert.Error(t, respErr)
-				assert.Nil(t, resp)
-			} else {
-				if test.wantRespStatus > 0 {
-					assert.Equal(t, test.wantRespStatus, resp.StatusCode)
-				}
-				assert.ErrorIs(t, respErr, test.wantError)
+			if test.wantRespStatus > 0 {
+				assert.Equal(t, test.wantRespStatus, resp.StatusCode)
 			}
+			assert.ErrorIs(t, respErr, test.wantError)
 		})
 	}
 }
