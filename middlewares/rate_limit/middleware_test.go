@@ -13,115 +13,181 @@ import (
 func TestNewRateLimitMiddleware(t *testing.T) {
 	t.Parallel()
 
-	refTimeNow := time.Now().UTC().Truncate(1000 * time.Millisecond)
-	refTimeResult := refTimeNow.Add(10 * time.Minute)
-	refTimeExpired := refTimeNow.AddDate(-1, 0, 0)
-	refTimeFuture := refTimeNow.AddDate(1, 0, 0)
-	refTimeAlmostExpired := refTimeNow.Add(1000 * time.Millisecond)
-	refTimeResultLater := refTimeAlmostExpired.Add(10 * time.Minute)
+	t.Run("happy flow/empty queue", func(t *testing.T) {
+		t.Parallel()
 
-	tests := []struct {
-		name              string
-		queue             *Queue
-		interval          time.Duration
-		serverHandler     http.HandlerFunc
-		wantQueue         *Queue
-		wantLeastDuration time.Duration
-	}{
-		{
-			name:          "happy flow/empty queue",
-			queue:         NewQueue(5),
-			interval:      10 * time.Minute,
-			serverHandler: func(w http.ResponseWriter, r *http.Request) {},
-			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResult, nil, nil, nil, nil},
-				startIndex: 0,
-				count:      1,
-				size:       5,
-			},
-			wantLeastDuration: 0 * time.Millisecond,
-		},
-		{
-			name: "happy flow/full queue with expired item",
-			queue: &Queue{
-				queue:      []*time.Time{&refTimeExpired, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 0,
-				count:      5,
-				size:       5,
-			},
-			interval:      10 * time.Minute,
-			serverHandler: func(w http.ResponseWriter, r *http.Request) {},
-			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResult, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 2,
-				count:      4,
-				size:       5,
-			},
-			wantLeastDuration: 0 * time.Millisecond,
-		},
-		{
-			name: "happy flow/full queue with not expired item",
-			queue: &Queue{
-				queue:      []*time.Time{&refTimeAlmostExpired, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 0,
-				count:      5,
-				size:       5,
-			},
-			interval:      10 * time.Minute,
-			serverHandler: func(w http.ResponseWriter, r *http.Request) {},
-			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResultLater, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 2,
-				count:      4,
-				size:       5,
-			},
-			wantLeastDuration: 1000 * time.Millisecond,
-		},
-		{
-			name: "happy flow/full queue with expired item/long processing request",
-			queue: &Queue{
-				queue:      []*time.Time{&refTimeExpired, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 0,
-				count:      5,
-				size:       5,
-			},
-			interval: 10 * time.Minute,
-			serverHandler: func(w http.ResponseWriter, r *http.Request) {
-				time.Sleep(1000 * time.Millisecond)
-			},
-			wantQueue: &Queue{
-				queue:      []*time.Time{&refTimeResultLater, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
-				startIndex: 2,
-				count:      4,
-				size:       5,
-			},
-			wantLeastDuration: 1000 * time.Millisecond,
-		},
-	}
+		refTimeNow := time.Now().UTC().Truncate(truncateInterval)
+		refTimeResult := refTimeNow.Add(10 * time.Minute)
+		queue := NewQueue(5)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+		start := time.Now()
 
-			start := time.Now()
+		serv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		defer serv.Close()
 
-			serv := httptest.NewServer(tt.serverHandler)
-			defer serv.Close()
+		cli := goclient.NewClient(
+			goclient.WithMiddlewares(
+				NewRateLimitMiddleware(queue, 10*time.Minute),
+			),
+		)
 
-			cli := goclient.NewClient(
-				goclient.WithMiddlewares(
-					NewRateLimitMiddleware(tt.queue, tt.interval),
-				),
-			)
+		req, reqErr := http.NewRequest(http.MethodGet, serv.URL, nil)
+		assert.NoError(t, reqErr)
+		cli.Do(req)
 
-			req, reqErr := http.NewRequest(http.MethodGet, serv.URL, nil)
-			assert.NoError(t, reqErr)
-			cli.Do(req)
-			assert.LessOrEqual(t, tt.wantLeastDuration, time.Since(start))
-			if !assert.Equal(t, tt.wantQueue, tt.queue) {
-				t.Error(tt.queue.queue)
-				t.Error(tt.wantQueue.queue)
-			}
-		})
-	}
+		elapsed := time.Since(start)
+		assert.LessOrEqual(t, time.Duration(0), elapsed)
+
+		wantQueue := &Queue{
+			queue:      []*time.Time{&refTimeResult, nil, nil, nil, nil},
+			startIndex: 0,
+			count:      1,
+			size:       5,
+		}
+		if !assert.Equal(t, wantQueue, queue) {
+			t.Error(queue.queue)
+			t.Error(wantQueue.queue)
+		}
+	})
+
+	t.Run("happy flow/full queue with expired item", func(t *testing.T) {
+		t.Parallel()
+
+		refTimeNow := time.Now().UTC().Truncate(truncateInterval)
+		refTimeResult := refTimeNow.Add(10 * time.Minute)
+		refTimeExpired := refTimeNow.AddDate(-1, 0, 0)
+		refTimeFuture := refTimeNow.AddDate(1, 0, 0)
+
+		queue := &Queue{
+			queue:      []*time.Time{&refTimeExpired, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 0,
+			count:      5,
+			size:       5,
+		}
+
+		start := time.Now()
+
+		serv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		defer serv.Close()
+
+		cli := goclient.NewClient(
+			goclient.WithMiddlewares(
+				NewRateLimitMiddleware(queue, 10*time.Minute),
+			),
+		)
+
+		req, reqErr := http.NewRequest(http.MethodGet, serv.URL, nil)
+		assert.NoError(t, reqErr)
+		cli.Do(req)
+
+		elapsed := time.Since(start)
+		assert.LessOrEqual(t, time.Duration(0), elapsed)
+
+		wantQueue := &Queue{
+			queue:      []*time.Time{&refTimeResult, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 2,
+			count:      4,
+			size:       5,
+		}
+		if !assert.Equal(t, wantQueue, queue) {
+			t.Error(queue.queue)
+			t.Error(wantQueue.queue)
+		}
+	})
+
+	t.Run("happy flow/full queue with not expired item", func(t *testing.T) {
+		t.Parallel()
+
+		refTimeNow := time.Now().UTC().Truncate(truncateInterval)
+		refTimeFuture := refTimeNow.AddDate(1, 0, 0)
+		// Item expires 2s from now — gives plenty of headroom
+		refTimeAlmostExpired := refTimeNow.Add(2 * truncateInterval)
+		refTimeResultLater := refTimeAlmostExpired.Add(10 * time.Minute)
+
+		queue := &Queue{
+			queue:      []*time.Time{&refTimeAlmostExpired, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 0,
+			count:      5,
+			size:       5,
+		}
+
+		start := time.Now()
+
+		serv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		defer serv.Close()
+
+		cli := goclient.NewClient(
+			goclient.WithMiddlewares(
+				NewRateLimitMiddleware(queue, 10*time.Minute),
+			),
+		)
+
+		req, reqErr := http.NewRequest(http.MethodGet, serv.URL, nil)
+		assert.NoError(t, reqErr)
+		cli.Do(req)
+
+		elapsed := time.Since(start)
+		// Should have waited for the almost-expired item — at least 1s
+		assert.LessOrEqual(t, 1*time.Second, elapsed)
+
+		wantQueue := &Queue{
+			queue:      []*time.Time{&refTimeResultLater, &refTimeAlmostExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 2,
+			count:      4,
+			size:       5,
+		}
+		if !assert.Equal(t, wantQueue, queue) {
+			t.Error(queue.queue)
+			t.Error(wantQueue.queue)
+		}
+	})
+
+	t.Run("happy flow/full queue with expired item/long processing request", func(t *testing.T) {
+		t.Parallel()
+
+		refTimeNow := time.Now().UTC().Truncate(truncateInterval)
+		refTimeExpired := refTimeNow.AddDate(-1, 0, 0)
+		refTimeFuture := refTimeNow.AddDate(1, 0, 0)
+		// Server sleeps 1s, so result time ≈ now + 1s + interval
+		refTimeLongProcessing := refTimeNow.Add(1 * truncateInterval)
+		refTimeResultLongProcessing := refTimeLongProcessing.Add(10 * time.Minute)
+
+		queue := &Queue{
+			queue:      []*time.Time{&refTimeExpired, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 0,
+			count:      5,
+			size:       5,
+		}
+
+		start := time.Now()
+
+		serv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(1000 * time.Millisecond)
+		}))
+		defer serv.Close()
+
+		cli := goclient.NewClient(
+			goclient.WithMiddlewares(
+				NewRateLimitMiddleware(queue, 10*time.Minute),
+			),
+		)
+
+		req, reqErr := http.NewRequest(http.MethodGet, serv.URL, nil)
+		assert.NoError(t, reqErr)
+		cli.Do(req)
+
+		elapsed := time.Since(start)
+		assert.LessOrEqual(t, 1*time.Second, elapsed)
+
+		wantQueue := &Queue{
+			queue:      []*time.Time{&refTimeResultLongProcessing, &refTimeExpired, &refTimeFuture, &refTimeFuture, &refTimeFuture},
+			startIndex: 2,
+			count:      4,
+			size:       5,
+		}
+		if !assert.Equal(t, wantQueue, queue) {
+			t.Error(queue.queue)
+			t.Error(wantQueue.queue)
+		}
+	})
 }
