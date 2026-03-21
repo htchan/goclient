@@ -15,9 +15,14 @@ func NewRateLimitMiddleware(
 ) goclient.Middleware {
 	return func(f goclient.Requester) goclient.Requester {
 		return func(req *http.Request) (*http.Response, error) {
+			// tPtr is shared with the queue. We set a large initial expiry
+			// (100x interval) so the slot cannot be dequeued while the
+			// request is in-flight. After the request completes, we update
+			// to the real expiry. If the request crashes without updating,
+			// the slot still self-heals after 100x interval.
 			tPtr := new(time.Time)
 			for {
-				*tPtr = time.Now().UTC().Truncate(truncateInterval).Add(interval)
+				*tPtr = time.Now().UTC().Truncate(truncateInterval).Add(interval * 100)
 				// try to dequeue expired items
 				for item := queue.Item(0); item != nil && item.Before(time.Now()); item = queue.Item(0) {
 					queue.Dequeue()
@@ -42,6 +47,7 @@ func NewRateLimitMiddleware(
 
 			resp, err := f(req)
 
+			// Update to real expiry based on completion time.
 			*tPtr = time.Now().UTC().Truncate(truncateInterval).Add(interval)
 
 			return resp, err
