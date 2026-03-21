@@ -46,14 +46,17 @@ func NewRequestRecorderDropClientForContinueFailed(
 		} else {
 			failureCount = 0
 		}
-		failureCounts[cli] = failureCount
 
 		// create go routine to add client back to pool after cooldown
 		if failureCount < failureThreshold {
+			failureCounts[cli] = failureCount
 			go func() {
 				time.Sleep(cooldownInterval)
 				pool.AddClients(cli)
 			}()
+		} else {
+			// client is being dropped — clean up its entry to prevent map leak
+			delete(failureCounts, cli)
 		}
 	}
 }
