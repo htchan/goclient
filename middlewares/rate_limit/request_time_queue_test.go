@@ -21,8 +21,9 @@ func TestNewQueue(t *testing.T) {
 			name:   "happy flow",
 			length: 5,
 			want: &Queue{
-				queue: make([]*time.Time, 5),
-				size:  5,
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
 			},
 		},
 	}
@@ -46,7 +47,7 @@ func TestQueue_Count(t *testing.T) {
 	}{
 		{
 			name:  "happy flow",
-			queue: &Queue{startIndex: 0, count: 5, size: 10},
+			queue: &Queue{startIndex: 0, count: 5, size: 10, maxSize: 10},
 			want:  5,
 		},
 	}
@@ -72,40 +73,43 @@ func TestQueue_Enqueue(t *testing.T) {
 	}{
 		{
 			name:        "happy flow/empty queue",
-			queue:       &Queue{size: 5, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     nil,
 			wantQueue: &Queue{
-				queue: []*time.Time{&refTime, nil, nil, nil, nil},
-				count: 1,
-				size:  5,
+				queue:   []*time.Time{&refTime, nil, nil, nil, nil},
+				count:   1,
+				size:    5,
+				maxSize: 5,
 			},
 		},
 		{
 			name:        "happy flow/non empty queue",
-			queue:       &Queue{size: 5, count: 4, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, count: 4, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     nil,
 			wantQueue: &Queue{
-				queue: []*time.Time{nil, nil, nil, nil, &refTime},
-				count: 5,
-				size:  5,
+				queue:   []*time.Time{nil, nil, nil, nil, &refTime},
+				count:   5,
+				size:    5,
+				maxSize: 5,
 			},
 		},
 		{
 			name:        "happy flow/full queue",
-			queue:       &Queue{size: 5, count: 5, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, count: 5, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     ErrFullQueue,
 			wantQueue: &Queue{
-				queue: []*time.Time{nil, nil, nil, nil, nil},
-				count: 5,
-				size:  5,
+				queue:   []*time.Time{nil, nil, nil, nil, nil},
+				count:   5,
+				size:    5,
+				maxSize: 5,
 			},
 		},
 		{
 			name:        "happy flow/non zero index/empty queue",
-			queue:       &Queue{size: 5, startIndex: 4, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, startIndex: 4, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     nil,
 			wantQueue: &Queue{
@@ -113,11 +117,12 @@ func TestQueue_Enqueue(t *testing.T) {
 				startIndex: 4,
 				count:      1,
 				size:       5,
+				maxSize:    5,
 			},
 		},
 		{
 			name:        "happy flow/non zero index/non empty queue",
-			queue:       &Queue{size: 5, startIndex: 4, count: 4, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, startIndex: 4, count: 4, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     nil,
 			wantQueue: &Queue{
@@ -125,11 +130,12 @@ func TestQueue_Enqueue(t *testing.T) {
 				startIndex: 4,
 				count:      5,
 				size:       5,
+				maxSize:    5,
 			},
 		},
 		{
 			name:        "happy flow/non zero index/full queue",
-			queue:       &Queue{size: 5, startIndex: 4, count: 5, queue: make([]*time.Time, 5)},
+			queue:       &Queue{size: 5, maxSize: 5, startIndex: 4, count: 5, queue: make([]*time.Time, 5)},
 			enqueueItem: &refTime,
 			wantErr:     ErrFullQueue,
 			wantQueue: &Queue{
@@ -137,6 +143,7 @@ func TestQueue_Enqueue(t *testing.T) {
 				startIndex: 4,
 				count:      5,
 				size:       5,
+				maxSize:    5,
 			},
 		},
 	}
@@ -162,16 +169,17 @@ func TestQueue_Dequeue(t *testing.T) {
 	}{
 		{
 			name:      "happy flow/empty queue",
-			queue:     &Queue{queue: make([]*time.Time, 5), size: 5},
+			queue:     &Queue{queue: make([]*time.Time, 5), size: 5, maxSize: 5},
 			want:      nil,
-			wantQueue: &Queue{queue: make([]*time.Time, 5), size: 5},
+			wantQueue: &Queue{queue: make([]*time.Time, 5), size: 5, maxSize: 5},
 		},
 		{
 			name: "happy flow/non empty queue",
 			queue: &Queue{
-				queue: []*time.Time{&refTime, nil, nil, nil, nil},
-				count: 1,
-				size:  5,
+				queue:   []*time.Time{&refTime, nil, nil, nil, nil},
+				count:   1,
+				size:    5,
+				maxSize: 5,
 			},
 			want: &refTime,
 			wantQueue: &Queue{
@@ -179,13 +187,14 @@ func TestQueue_Dequeue(t *testing.T) {
 				startIndex: 1,
 				count:      0,
 				size:       5,
+				maxSize:    5,
 			},
 		},
 		{
 			name:      "happy flow/non zero index/empty queue",
-			queue:     &Queue{queue: make([]*time.Time, 5), startIndex: 4, size: 5},
+			queue:     &Queue{queue: make([]*time.Time, 5), startIndex: 4, size: 5, maxSize: 5},
 			want:      nil,
-			wantQueue: &Queue{queue: make([]*time.Time, 5), startIndex: 4, size: 5},
+			wantQueue: &Queue{queue: make([]*time.Time, 5), startIndex: 4, size: 5, maxSize: 5},
 		},
 		{
 			name: "happy flow/non zero index/non empty queue",
@@ -194,6 +203,7 @@ func TestQueue_Dequeue(t *testing.T) {
 				startIndex: 4,
 				count:      1,
 				size:       5,
+				maxSize:    5,
 			},
 			want: &refTime,
 			wantQueue: &Queue{
@@ -201,6 +211,7 @@ func TestQueue_Dequeue(t *testing.T) {
 				startIndex: 0,
 				count:      0,
 				size:       5,
+				maxSize:    5,
 			},
 		},
 	}
@@ -236,6 +247,7 @@ func TestQueue_Item(t *testing.T) {
 				startIndex: 0,
 				count:      0,
 				size:       5,
+				maxSize:    5,
 			},
 			i:    0,
 			want: nil,
@@ -247,6 +259,7 @@ func TestQueue_Item(t *testing.T) {
 				startIndex: 0,
 				count:      3,
 				size:       5,
+				maxSize:    5,
 			},
 			i:    0,
 			want: &refTime,
@@ -258,6 +271,7 @@ func TestQueue_Item(t *testing.T) {
 				startIndex: 0,
 				count:      3,
 				size:       5,
+				maxSize:    5,
 			},
 			i:    1,
 			want: &refTime1,
@@ -269,6 +283,7 @@ func TestQueue_Item(t *testing.T) {
 				startIndex: 0,
 				count:      3,
 				size:       5,
+				maxSize:    5,
 			},
 			i:    3,
 			want: nil,
@@ -280,6 +295,7 @@ func TestQueue_Item(t *testing.T) {
 				startIndex: 4,
 				count:      3,
 				size:       5,
+				maxSize:    5,
 			},
 			i:    0,
 			want: &refTime4,
@@ -291,6 +307,120 @@ func TestQueue_Item(t *testing.T) {
 			t.Parallel()
 			got := tt.queue.Item(tt.i)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestQueue_Resize(t *testing.T) {
+	t.Parallel()
+
+	refTime1 := refTime.AddDate(1, 0, 0)
+	refTime2 := refTime.AddDate(2, 0, 0)
+
+	tests := []struct {
+		name      string
+		queue     *Queue
+		newSize   int
+		wantQueue *Queue
+	}{
+		{
+			name: "shrink empty queue",
+			queue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
+			},
+			newSize: 3,
+			wantQueue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    3,
+				maxSize: 5,
+			},
+		},
+		{
+			name: "shrink drops oldest items",
+			queue: &Queue{
+				queue:   []*time.Time{&refTime, &refTime1, &refTime2, nil, nil},
+				count:   3,
+				size:    5,
+				maxSize: 5,
+			},
+			newSize: 1,
+			wantQueue: &Queue{
+				queue:      []*time.Time{&refTime, &refTime1, &refTime2, nil, nil},
+				startIndex: 2,
+				count:      1,
+				size:       1,
+				maxSize:    5,
+			},
+		},
+		{
+			name: "shrink with non zero index drops oldest",
+			queue: &Queue{
+				queue:      []*time.Time{&refTime2, nil, nil, &refTime, &refTime1},
+				startIndex: 3,
+				count:      3,
+				size:       5,
+				maxSize:    5,
+			},
+			newSize: 2,
+			wantQueue: &Queue{
+				queue:      []*time.Time{&refTime2, nil, nil, &refTime, &refTime1},
+				startIndex: 4,
+				count:      2,
+				size:       2,
+				maxSize:    5,
+			},
+		},
+		{
+			name: "grow back to max size",
+			queue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    2,
+				maxSize: 5,
+			},
+			newSize: 5,
+			wantQueue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
+			},
+		},
+		{
+			name: "clamp to max size",
+			queue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
+			},
+			newSize: 10,
+			wantQueue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
+			},
+		},
+		{
+			name: "clamp to 1",
+			queue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    5,
+				maxSize: 5,
+			},
+			newSize: 0,
+			wantQueue: &Queue{
+				queue:   make([]*time.Time, 5),
+				size:    1,
+				maxSize: 5,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.queue.Resize(tt.newSize)
+			assert.Equal(t, tt.wantQueue, tt.queue)
 		})
 	}
 }
