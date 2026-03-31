@@ -16,6 +16,7 @@ type Queue struct {
 	startIndex int
 	count      int
 	size       int
+	maxSize    int
 }
 
 func NewQueue(length int) *Queue {
@@ -24,6 +25,7 @@ func NewQueue(length int) *Queue {
 		startIndex: 0,
 		count:      0,
 		size:       length,
+		maxSize:    length,
 	}
 }
 
@@ -42,7 +44,7 @@ func (q *Queue) Enqueue(t *time.Time) error {
 		return ErrFullQueue
 	}
 
-	q.queue[(q.startIndex+q.count)%q.size] = t
+	q.queue[(q.startIndex+q.count)%q.maxSize] = t
 	q.count += 1
 
 	return nil
@@ -57,7 +59,7 @@ func (q *Queue) Dequeue() *time.Time {
 	}
 
 	item := q.queue[q.startIndex]
-	q.startIndex = (q.startIndex + 1) % q.size
+	q.startIndex = (q.startIndex + 1) % q.maxSize
 	q.count -= 1
 
 	return item
@@ -71,5 +73,25 @@ func (q *Queue) Item(i int) *time.Time {
 		return nil
 	}
 
-	return q.queue[(q.startIndex+i)%q.size]
+	return q.queue[(q.startIndex+i)%q.maxSize]
+}
+
+func (q *Queue) Resize(newSize int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if newSize > q.maxSize {
+		newSize = q.maxSize
+	}
+	if newSize < 1 {
+		newSize = 1
+	}
+
+	// drop oldest items if count exceeds new size
+	for q.count > newSize {
+		q.startIndex = (q.startIndex + 1) % q.maxSize
+		q.count--
+	}
+
+	q.size = newSize
 }
