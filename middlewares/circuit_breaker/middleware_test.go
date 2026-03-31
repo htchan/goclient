@@ -100,13 +100,8 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
 			resp, err := wrapped(req)
 
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-				assert.Nil(t, resp)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.wantResp, resp)
-			}
+			assert.ErrorIs(t, err, tt.wantErr)
+			assert.Equal(t, tt.wantResp, resp)
 			assert.Equal(t, tt.wantState, tt.breaker.State())
 		})
 	}
