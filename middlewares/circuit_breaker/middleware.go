@@ -44,7 +44,7 @@ type CircuitBreaker struct {
 	state            State
 	failureThreshold int
 	successThreshold int
-	timeout          time.Duration
+	recoverDuration          time.Duration
 	isFailure        goclient.ResultValidator
 
 	failureCount int
@@ -69,12 +69,12 @@ func WithNowFunc(f func() time.Time) Option {
 //
 // failureThreshold: number of consecutive failures before opening the circuit.
 // successThreshold: number of consecutive successes in half-open state before closing.
-// timeout: how long to wait in open state before transitioning to half-open.
+// recoverDuration: how long to wait in open state before transitioning to half-open.
 // isFailure: determines whether a request result counts as a failure.
 func NewCircuitBreaker(
 	failureThreshold int,
 	successThreshold int,
-	timeout time.Duration,
+	recoverDuration time.Duration,
 	isFailure goclient.ResultValidator,
 	opts ...Option,
 ) *CircuitBreaker {
@@ -89,7 +89,7 @@ func NewCircuitBreaker(
 		state:            StateClosed,
 		failureThreshold: failureThreshold,
 		successThreshold: successThreshold,
-		timeout:          timeout,
+		recoverDuration:          recoverDuration,
 		isFailure:        isFailure,
 		now:              time.Now,
 	}
@@ -109,9 +109,9 @@ func (breaker *CircuitBreaker) State() State {
 }
 
 // currentState returns the effective state, transitioning from open to half-open
-// if the timeout has elapsed. Must be called with mu held.
+// if the recoverDuration has elapsed. Must be called with mu held.
 func (breaker *CircuitBreaker) currentState() State {
-	if breaker.state == StateOpen && breaker.now().Sub(breaker.lastFailure) >= breaker.timeout {
+	if breaker.state == StateOpen && breaker.now().Sub(breaker.lastFailure) >= breaker.recoverDuration {
 		breaker.state = StateHalfOpen
 		breaker.successCount = 0
 		breaker.failureCount = 0
