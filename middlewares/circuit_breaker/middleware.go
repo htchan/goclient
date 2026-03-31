@@ -60,8 +60,8 @@ type Option func(*CircuitBreaker)
 
 // WithNowFunc overrides the time source (for testing).
 func WithNowFunc(f func() time.Time) Option {
-	return func(cb *CircuitBreaker) {
-		cb.now = f
+	return func(breaker *CircuitBreaker) {
+		breaker.now = f
 	}
 }
 
@@ -85,7 +85,7 @@ func NewCircuitBreaker(
 		successThreshold = 1
 	}
 
-	cb := &CircuitBreaker{
+	breaker := &CircuitBreaker{
 		state:            StateClosed,
 		failureThreshold: failureThreshold,
 		successThreshold: successThreshold,
@@ -95,39 +95,39 @@ func NewCircuitBreaker(
 	}
 
 	for _, opt := range opts {
-		opt(cb)
+		opt(breaker)
 	}
 
-	return cb
+	return breaker
 }
 
 // State returns the current state of the circuit breaker.
-func (cb *CircuitBreaker) State() State {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.currentState()
+func (breaker *CircuitBreaker) State() State {
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+	return breaker.currentState()
 }
 
 // currentState returns the effective state, transitioning from open to half-open
 // if the timeout has elapsed. Must be called with mu held.
-func (cb *CircuitBreaker) currentState() State {
-	if cb.state == StateOpen && cb.now().Sub(cb.lastFailure) >= cb.timeout {
-		cb.state = StateHalfOpen
-		cb.successCount = 0
-		cb.failureCount = 0
+func (breaker *CircuitBreaker) currentState() State {
+	if breaker.state == StateOpen && breaker.now().Sub(breaker.lastFailure) >= breaker.timeout {
+		breaker.state = StateHalfOpen
+		breaker.successCount = 0
+		breaker.failureCount = 0
 	}
-	return cb.state
+	return breaker.state
 }
 
 // recordSuccess records a successful request. Must be called with mu held.
-func (cb *CircuitBreaker) recordSuccess() {
-	cb.failureCount = 0
-	switch cb.state {
+func (breaker *CircuitBreaker) recordSuccess() {
+	breaker.failureCount = 0
+	switch breaker.state {
 	case StateHalfOpen:
-		cb.successCount++
-		if cb.successCount >= cb.successThreshold {
-			cb.state = StateClosed
-			cb.successCount = 0
+		breaker.successCount++
+		if breaker.successCount >= breaker.successThreshold {
+			breaker.state = StateClosed
+			breaker.successCount = 0
 		}
 	case StateClosed:
 		// already closed, nothing to do
@@ -135,45 +135,45 @@ func (cb *CircuitBreaker) recordSuccess() {
 }
 
 // recordFailure records a failed request. Must be called with mu held.
-func (cb *CircuitBreaker) recordFailure() {
-	cb.successCount = 0
-	cb.failureCount++
-	cb.lastFailure = cb.now()
+func (breaker *CircuitBreaker) recordFailure() {
+	breaker.successCount = 0
+	breaker.failureCount++
+	breaker.lastFailure = breaker.now()
 
-	switch cb.state {
+	switch breaker.state {
 	case StateClosed:
-		if cb.failureCount >= cb.failureThreshold {
-			cb.state = StateOpen
+		if breaker.failureCount >= breaker.failureThreshold {
+			breaker.state = StateOpen
 		}
 	case StateHalfOpen:
 		// any failure in half-open immediately reopens
-		cb.state = StateOpen
-		cb.failureCount = 0
+		breaker.state = StateOpen
+		breaker.failureCount = 0
 	}
 }
 
 // NewCircuitBreakerMiddleware creates a middleware that wraps requests with
 // circuit breaker logic.
-func NewCircuitBreakerMiddleware(cb *CircuitBreaker) goclient.Middleware {
+func NewCircuitBreakerMiddleware(breaker *CircuitBreaker) goclient.Middleware {
 	return func(f goclient.Requester) goclient.Requester {
 		return func(req *http.Request) (*http.Response, error) {
-			cb.mu.Lock()
-			state := cb.currentState()
+			breaker.mu.Lock()
+			state := breaker.currentState()
 			if state == StateOpen {
-				cb.mu.Unlock()
+				breaker.mu.Unlock()
 				return nil, ErrCircuitOpen
 			}
-			cb.mu.Unlock()
+			breaker.mu.Unlock()
 
 			resp, err := f(req)
 
-			cb.mu.Lock()
-			if cb.isFailure(req, resp, err) {
-				cb.recordFailure()
+			breaker.mu.Lock()
+			if breaker.isFailure(req, resp, err) {
+				breaker.recordFailure()
 			} else {
-				cb.recordSuccess()
+				breaker.recordSuccess()
 			}
-			cb.mu.Unlock()
+			breaker.mu.Unlock()
 
 			return resp, err
 		}
