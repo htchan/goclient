@@ -298,12 +298,10 @@ func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 200 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
 			cli.Do(req)
-		}()
+		})
 	}
 	wg.Wait()
 
