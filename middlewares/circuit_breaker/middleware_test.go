@@ -20,17 +20,17 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 	neverFail := func(_ *http.Request, _ *http.Response, _ error) bool { return false }
 
 	tests := []struct {
-		name        string
-		breaker     *CircuitBreaker
-		requester   goclient.Requester
-		wantState   State
-		wantResp    *http.Response
-		wantErr     error
+		name      string
+		breaker   *CircuitBreaker
+		requester goclient.Requester
+		wantState State
+		wantResp  *http.Response
+		wantErr   error
 	}{
 		{
 			name: "passes request through when closed and records success",
 			breaker: &CircuitBreaker{
-				state:         StateClosed,
+				state:            StateClosed,
 				failureThreshold: 1,
 				successThreshold: 1,
 				recoverDuration:  5 * time.Second,
@@ -45,7 +45,7 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 		{
 			name: "rejects request when open",
 			breaker: &CircuitBreaker{
-				state:         StateOpen,
+				state:            StateOpen,
 				failureThreshold: 1,
 				successThreshold: 1,
 				recoverDuration:  5 * time.Second,
@@ -61,7 +61,7 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 		{
 			name: "records failure when isFailure returns true",
 			breaker: &CircuitBreaker{
-				state:         StateClosed,
+				state:            StateClosed,
 				failureThreshold: 1,
 				successThreshold: 1,
 				recoverDuration:  5 * time.Second,
@@ -76,7 +76,7 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 		{
 			name: "records success when isFailure returns false",
 			breaker: &CircuitBreaker{
-				state:         StateHalfOpen,
+				state:            StateHalfOpen,
 				failureThreshold: 1,
 				successThreshold: 1,
 				recoverDuration:  5 * time.Second,
