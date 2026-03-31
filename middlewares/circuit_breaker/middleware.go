@@ -28,6 +28,9 @@ type CircuitBreaker struct {
 
 	// now is a function that returns the current time, injectable for testing.
 	now func() time.Time
+
+	// onStateChange is called when the circuit breaker transitions between states.
+	onStateChange func(from, to State)
 }
 
 // Option configures the circuit breaker.
@@ -37,6 +40,14 @@ type Option func(*CircuitBreaker)
 func WithNowFunc(f func() time.Time) Option {
 	return func(breaker *CircuitBreaker) {
 		breaker.now = f
+	}
+}
+
+// WithOnStateChange sets a callback that is invoked when the circuit breaker
+// transitions between states. The callback receives the previous and new state.
+func WithOnStateChange(f func(from, to State)) Option {
+	return func(breaker *CircuitBreaker) {
+		breaker.onStateChange = f
 	}
 }
 
@@ -67,6 +78,7 @@ func NewCircuitBreaker(
 		recoverDuration:          recoverDuration,
 		isFailure:        isFailure,
 		now:              time.Now,
+		onStateChange:    func(from, to State) {},
 	}
 
 	for _, opt := range opts {
@@ -83,11 +95,21 @@ func (breaker *CircuitBreaker) State() State {
 	defer breaker.mu.Unlock()
 
 	if breaker.state == StateOpen && breaker.now().Sub(breaker.lastFailure) >= breaker.recoverDuration {
-		breaker.state = StateHalfOpen
+		breaker.setState(StateHalfOpen)
 		breaker.successCount = 0
 		breaker.failureCount = 0
 	}
 	return breaker.state
+}
+
+// setState transitions the breaker to a new state and fires the callback.
+// Must be called with mu held.
+func (breaker *CircuitBreaker) setState(to State) {
+	from := breaker.state
+	breaker.state = to
+	if from != to {
+		breaker.onStateChange(from, to)
+	}
 }
 
 // recordSuccess records a successful request.
@@ -100,7 +122,7 @@ func (breaker *CircuitBreaker) recordSuccess() {
 	case StateHalfOpen:
 		breaker.successCount++
 		if breaker.successCount >= breaker.successThreshold {
-			breaker.state = StateClosed
+			breaker.setState(StateClosed)
 			breaker.successCount = 0
 		}
 	case StateClosed:
@@ -120,11 +142,11 @@ func (breaker *CircuitBreaker) recordFailure() {
 	switch breaker.state {
 	case StateClosed:
 		if breaker.failureCount >= breaker.failureThreshold {
-			breaker.state = StateOpen
+			breaker.setState(StateOpen)
 		}
 	case StateHalfOpen:
 		// any failure in half-open immediately reopens
-		breaker.state = StateOpen
+		breaker.setState(StateOpen)
 		breaker.failureCount = 0
 	}
 }
