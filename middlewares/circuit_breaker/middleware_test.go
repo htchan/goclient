@@ -118,11 +118,11 @@ func TestCircuitBreaker_OpenToHalfOpen(t *testing.T) {
 	assert.Error(t, err)
 	assert.Equal(t, StateOpen, breaker.State())
 
-	// Still open before timeout
+	// Still open before recoverDuration
 	advanceTime(3 * time.Second)
 	assert.Equal(t, StateOpen, breaker.State())
 
-	// After timeout → half-open
+	// After recoverDuration → half-open
 	advanceTime(3 * time.Second)
 	assert.Equal(t, StateHalfOpen, breaker.State())
 }
@@ -166,7 +166,7 @@ func TestCircuitBreaker_HalfOpenToClose(t *testing.T) {
 	cli.Do(req)
 	assert.Equal(t, StateOpen, breaker.State())
 
-	// Advance past timeout → half-open
+	// Advance past recoverDuration → half-open
 	advanceTime(6 * time.Second)
 	assert.Equal(t, StateHalfOpen, breaker.State())
 
@@ -223,7 +223,7 @@ func TestCircuitBreaker_HalfOpenToOpen(t *testing.T) {
 	cli.Do(req)
 	assert.Equal(t, StateOpen, breaker.State())
 
-	// Advance past timeout → half-open
+	// Advance past recoverDuration → half-open
 	advanceTime(6 * time.Second)
 	assert.Equal(t, StateHalfOpen, breaker.State())
 
