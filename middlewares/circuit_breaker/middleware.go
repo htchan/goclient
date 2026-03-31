@@ -77,15 +77,11 @@ func NewCircuitBreaker(
 }
 
 // State returns the current state of the circuit breaker.
+// If the breaker is open and recoverDuration has elapsed, it transitions to half-open.
 func (breaker *CircuitBreaker) State() State {
 	breaker.mu.Lock()
 	defer breaker.mu.Unlock()
-	return breaker.currentState()
-}
 
-// currentState returns the effective state, transitioning from open to half-open
-// if the recoverDuration has elapsed. Must be called with mu held.
-func (breaker *CircuitBreaker) currentState() State {
 	if breaker.state == StateOpen && breaker.now().Sub(breaker.lastFailure) >= breaker.recoverDuration {
 		breaker.state = StateHalfOpen
 		breaker.successCount = 0
@@ -94,8 +90,11 @@ func (breaker *CircuitBreaker) currentState() State {
 	return breaker.state
 }
 
-// recordSuccess records a successful request. Must be called with mu held.
+// recordSuccess records a successful request.
 func (breaker *CircuitBreaker) recordSuccess() {
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+
 	breaker.failureCount = 0
 	switch breaker.state {
 	case StateHalfOpen:
@@ -109,8 +108,11 @@ func (breaker *CircuitBreaker) recordSuccess() {
 	}
 }
 
-// recordFailure records a failed request. Must be called with mu held.
+// recordFailure records a failed request.
 func (breaker *CircuitBreaker) recordFailure() {
+	breaker.mu.Lock()
+	defer breaker.mu.Unlock()
+
 	breaker.successCount = 0
 	breaker.failureCount++
 	breaker.lastFailure = breaker.now()
@@ -132,23 +134,17 @@ func (breaker *CircuitBreaker) recordFailure() {
 func NewCircuitBreakerMiddleware(breaker *CircuitBreaker) goclient.Middleware {
 	return func(f goclient.Requester) goclient.Requester {
 		return func(req *http.Request) (*http.Response, error) {
-			breaker.mu.Lock()
-			state := breaker.currentState()
-			if state == StateOpen {
-				breaker.mu.Unlock()
+			if breaker.State() == StateOpen {
 				return nil, ErrCircuitOpen
 			}
-			breaker.mu.Unlock()
 
 			resp, err := f(req)
 
-			breaker.mu.Lock()
 			if breaker.isFailure(req, resp, err) {
 				breaker.recordFailure()
 			} else {
 				breaker.recordSuccess()
 			}
-			breaker.mu.Unlock()
 
 			return resp, err
 		}
