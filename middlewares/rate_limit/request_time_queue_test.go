@@ -338,7 +338,7 @@ func TestQueue_Resize(t *testing.T) {
 			},
 		},
 		{
-			name: "shrink drops oldest items",
+			name: "shrink preserves existing items",
 			queue: &Queue{
 				queue:   []*time.Time{&refTime, &refTime1, &refTime2, nil, nil},
 				count:   3,
@@ -347,15 +347,14 @@ func TestQueue_Resize(t *testing.T) {
 			},
 			newSize: 1,
 			wantQueue: &Queue{
-				queue:      []*time.Time{&refTime, &refTime1, &refTime2, nil, nil},
-				startIndex: 2,
-				count:      1,
-				size:       1,
-				maxSize:    5,
+				queue:   []*time.Time{&refTime, &refTime1, &refTime2, nil, nil},
+				count:   3,
+				size:    1,
+				maxSize: 5,
 			},
 		},
 		{
-			name: "shrink with non zero index drops oldest",
+			name: "shrink with non zero index preserves items",
 			queue: &Queue{
 				queue:      []*time.Time{&refTime2, nil, nil, &refTime, &refTime1},
 				startIndex: 3,
@@ -366,8 +365,8 @@ func TestQueue_Resize(t *testing.T) {
 			newSize: 2,
 			wantQueue: &Queue{
 				queue:      []*time.Time{&refTime2, nil, nil, &refTime, &refTime1},
-				startIndex: 4,
-				count:      2,
+				startIndex: 3,
+				count:      3,
 				size:       2,
 				maxSize:    5,
 			},
