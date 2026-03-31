@@ -41,6 +41,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 0,
 						count:      1,
 						size:       5,
+						maxSize:    5,
 					},
 					wantLeastDuration: 0 * time.Millisecond,
 				}
@@ -59,6 +60,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 0,
 						count:      5,
 						size:       5,
+						maxSize:    5,
 					},
 					interval:      10 * time.Minute,
 					serverHandler: func(w http.ResponseWriter, r *http.Request) {},
@@ -67,6 +69,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 2,
 						count:      4,
 						size:       5,
+						maxSize:    5,
 					},
 					wantLeastDuration: 0 * time.Millisecond,
 				}
@@ -86,6 +89,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 0,
 						count:      5,
 						size:       5,
+						maxSize:    5,
 					},
 					interval:      10 * time.Minute,
 					serverHandler: func(w http.ResponseWriter, r *http.Request) {},
@@ -94,6 +98,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 2,
 						count:      4,
 						size:       5,
+						maxSize:    5,
 					},
 					wantLeastDuration: 1000 * time.Millisecond,
 				}
@@ -114,6 +119,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 0,
 						count:      5,
 						size:       5,
+						maxSize:    5,
 					},
 					interval: 10 * time.Minute,
 					serverHandler: func(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +130,7 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 						startIndex: 2,
 						count:      4,
 						size:       5,
+						maxSize:    5,
 					},
 					wantLeastDuration: 1000 * time.Millisecond,
 				}
