@@ -1,7 +1,6 @@
 package circuitbreaker
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -15,57 +14,79 @@ import (
 func TestNewCircuitBreakerMiddleware(t *testing.T) {
 	t.Parallel()
 
+	now := time.Now()
+	dummyResp := &http.Response{StatusCode: http.StatusOK}
+	alwaysFail := func(_ *http.Request, _ *http.Response, _ error) bool { return true }
+	neverFail := func(_ *http.Request, _ *http.Response, _ error) bool { return false }
+
 	tests := []struct {
-		name              string
-		setup             func() *CircuitBreaker
-		serverStatus      int
-		useErrorRequester bool
-		wantState         State
-		wantStatus        int
-		wantErr           error
-		wantNilResp       bool
+		name        string
+		breaker     *CircuitBreaker
+		requester   goclient.Requester
+		wantState   State
+		wantResp    *http.Response
+		wantErr     error
 	}{
 		{
-			name: "passes request through when closed",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
+			name: "passes request through when closed and records success",
+			breaker: &CircuitBreaker{
+				state:         StateClosed,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        neverFail,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
-			serverStatus: http.StatusOK,
-			wantState:    StateClosed,
-			wantStatus:   http.StatusOK,
+			requester: func(_ *http.Request) (*http.Response, error) { return dummyResp, nil },
+			wantState: StateClosed,
+			wantResp:  dummyResp,
 		},
 		{
 			name: "rejects request when open",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				return breaker
+			breaker: &CircuitBreaker{
+				state:         StateOpen,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        neverFail,
+				lastFailure:      now,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
-			serverStatus: http.StatusOK,
-			wantState:    StateOpen,
-			wantNilResp:  true,
-			wantErr:      ErrCircuitOpen,
+			requester: func(_ *http.Request) (*http.Response, error) { return dummyResp, nil },
+			wantState: StateOpen,
+			wantErr:   ErrCircuitOpen,
 		},
 		{
-			name: "records failure from server error",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(1, 1, 5*time.Second, isServerError)
+			name: "records failure when isFailure returns true",
+			breaker: &CircuitBreaker{
+				state:         StateClosed,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        alwaysFail,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
-			serverStatus: http.StatusInternalServerError,
-			wantState:    StateOpen,
-			wantStatus:   http.StatusInternalServerError,
+			requester: func(_ *http.Request) (*http.Response, error) { return dummyResp, nil },
+			wantState: StateOpen,
+			wantResp:  dummyResp,
 		},
 		{
-			name: "records failure from transport error",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(1, 1, 5*time.Second, isServerError)
+			name: "records success when isFailure returns false",
+			breaker: &CircuitBreaker{
+				state:         StateHalfOpen,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        neverFail,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
-			useErrorRequester: true,
-			wantState:         StateOpen,
-			wantNilResp:       true,
+			requester: func(_ *http.Request) (*http.Response, error) { return dummyResp, nil },
+			wantState: StateClosed,
+			wantResp:  dummyResp,
 		},
 	}
 
@@ -73,40 +94,20 @@ func TestNewCircuitBreakerMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			breaker := tt.setup()
-			middleware := NewCircuitBreakerMiddleware(breaker)
+			middleware := NewCircuitBreakerMiddleware(tt.breaker)
+			wrapped := middleware(tt.requester)
 
-			var resp *http.Response
-			var err error
-
-			if tt.useErrorRequester {
-				requester := middleware(func(_ *http.Request) (*http.Response, error) {
-					return nil, errors.New("connection refused")
-				})
-				req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
-				resp, err = requester(req)
-			} else {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.WriteHeader(tt.serverStatus)
-				}))
-				defer server.Close()
-
-				requester := middleware(func(req *http.Request) (*http.Response, error) {
-					return http.DefaultClient.Do(req)
-				})
-				req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-				resp, err = requester(req)
-			}
+			req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+			resp, err := wrapped(req)
 
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
-			}
-			if tt.wantNilResp {
 				assert.Nil(t, resp)
-			} else if tt.wantStatus != 0 {
-				assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantResp, resp)
 			}
-			assert.Equal(t, tt.wantState, breaker.State())
+			assert.Equal(t, tt.wantState, tt.breaker.State())
 		})
 	}
 }
