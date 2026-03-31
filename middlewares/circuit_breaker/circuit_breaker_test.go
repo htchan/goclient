@@ -2,7 +2,6 @@ package circuitbreaker
 
 import (
 	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -120,18 +119,11 @@ func TestCircuitBreaker_State(t *testing.T) {
 			name: "open breaker after recover duration returns half-open",
 			setup: func() *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				return breaker
 			},
 			wantState: StateHalfOpen,
@@ -177,18 +169,11 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 			name: "half-open: closes after reaching success threshold",
 			setup: func() *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				breaker.State() // transition to half-open
 				return breaker
 			},
@@ -198,18 +183,11 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 			name: "half-open: stays half-open before reaching success threshold",
 			setup: func() *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 3, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				breaker.State() // transition to half-open
 				return breaker
 			},
@@ -256,18 +234,11 @@ func TestCircuitBreaker_recordFailure(t *testing.T) {
 			name: "half-open: reopens immediately",
 			setup: func() *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 3, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				breaker.State() // transition to half-open
 				return breaker
 			},
@@ -312,19 +283,12 @@ func TestCircuitBreaker_onStateChange(t *testing.T) {
 			name: "open to half-open fires callback",
 			setup: func(cb func(from, to State)) *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 					WithOnStateChange(cb),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				return breaker
 			},
 			action:          func(breaker *CircuitBreaker) { breaker.State() },
@@ -334,19 +298,12 @@ func TestCircuitBreaker_onStateChange(t *testing.T) {
 			name: "half-open to closed fires callback",
 			setup: func(cb func(from, to State)) *CircuitBreaker {
 				now := time.Now()
-				mu := sync.Mutex{}
 				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time {
-						mu.Lock()
-						defer mu.Unlock()
-						return now
-					}),
+					WithNowFunc(func() time.Time { return now }),
 					WithOnStateChange(cb),
 				)
 				breaker.recordFailure()
-				mu.Lock()
 				now = now.Add(6 * time.Second)
-				mu.Unlock()
 				breaker.State() // transition to half-open
 				return breaker
 			},
