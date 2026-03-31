@@ -283,3 +283,128 @@ func TestCircuitBreakerMiddleware_ConcurrentAccess(t *testing.T) {
 		})
 	}
 }
+
+type stateTransition struct {
+	from State
+	to   State
+}
+
+func TestCircuitBreakerMiddleware_OnStateChange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		failureThreshold int
+		successThreshold int
+		recoverDuration  time.Duration
+		steps            []step
+		wantTransitions  []stateTransition
+	}{
+		{
+			name:             "callback fires on each transition through full lifecycle",
+			failureThreshold: 2,
+			successThreshold: 1,
+			recoverDuration:  5 * time.Second,
+			steps: []step{
+				{action: "request_fail", wantState: StateClosed},
+				{action: "request_fail", wantState: StateOpen},
+				{action: "advance_time", duration: 6 * time.Second, wantState: StateHalfOpen},
+				{action: "request_success", wantState: StateClosed},
+			},
+			wantTransitions: []stateTransition{
+				{from: StateClosed, to: StateOpen},
+				{from: StateOpen, to: StateHalfOpen},
+				{from: StateHalfOpen, to: StateClosed},
+			},
+		},
+		{
+			name:             "callback fires on half-open to open",
+			failureThreshold: 1,
+			successThreshold: 2,
+			recoverDuration:  5 * time.Second,
+			steps: []step{
+				{action: "request_fail", wantState: StateOpen},
+				{action: "advance_time", duration: 6 * time.Second, wantState: StateHalfOpen},
+				{action: "request_fail", wantState: StateOpen},
+			},
+			wantTransitions: []stateTransition{
+				{from: StateClosed, to: StateOpen},
+				{from: StateOpen, to: StateHalfOpen},
+				{from: StateHalfOpen, to: StateOpen},
+			},
+		},
+		{
+			name:             "no callback when state does not change",
+			failureThreshold: 5,
+			successThreshold: 1,
+			recoverDuration:  time.Second,
+			steps: []step{
+				{action: "request_fail", wantState: StateClosed},
+				{action: "request_fail", wantState: StateClosed},
+				{action: "request_success", wantState: StateClosed},
+			},
+			wantTransitions: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			now := time.Now()
+			mu := sync.Mutex{}
+			mockNow := func() time.Time {
+				mu.Lock()
+				defer mu.Unlock()
+				return now
+			}
+			advanceTime := func(d time.Duration) {
+				mu.Lock()
+				defer mu.Unlock()
+				now = now.Add(d)
+			}
+
+			var transitions []stateTransition
+			breaker := NewCircuitBreaker(
+				tt.failureThreshold,
+				tt.successThreshold,
+				tt.recoverDuration,
+				isServerError,
+				WithNowFunc(mockNow),
+				WithOnStateChange(func(from, to State) {
+					transitions = append(transitions, stateTransition{from: from, to: to})
+				}),
+			)
+
+			failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer failServer.Close()
+
+			successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer successServer.Close()
+
+			cli := goclient.NewClient(
+				goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
+			)
+
+			for i, s := range tt.steps {
+				switch s.action {
+				case "request_success":
+					req, _ := http.NewRequest(http.MethodGet, successServer.URL, nil)
+					cli.Do(req)
+				case "request_fail":
+					req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
+					cli.Do(req)
+				case "advance_time":
+					advanceTime(s.duration)
+				}
+				assert.Equal(t, s.wantState, breaker.State(), "step %d", i)
+			}
+
+			assert.Equal(t, tt.wantTransitions, transitions)
+		})
+	}
+}
