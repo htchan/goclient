@@ -91,40 +91,51 @@ func TestNewCircuitBreaker(t *testing.T) {
 func TestCircuitBreaker_State(t *testing.T) {
 	t.Parallel()
 
+	now := time.Now()
+
 	tests := []struct {
 		name      string
-		setup     func() *CircuitBreaker
+		breaker   *CircuitBreaker
 		wantState State
 	}{
 		{
 			name: "closed breaker returns closed",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
+			breaker: &CircuitBreaker{
+				state:            StateClosed,
+				failureThreshold: 3,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateClosed,
 		},
 		{
 			name: "open breaker before recover duration returns open",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateOpen,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				lastFailure:      now,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateOpen,
 		},
 		{
 			name: "open breaker after recover duration returns half-open",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateOpen,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				lastFailure:      now.Add(-6 * time.Second),
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateHalfOpen,
 		},
@@ -134,8 +145,7 @@ func TestCircuitBreaker_State(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			breaker := tt.setup()
-			assert.Equal(t, tt.wantState, breaker.State())
+			assert.Equal(t, tt.wantState, tt.breaker.State())
 		})
 	}
 }
@@ -143,57 +153,67 @@ func TestCircuitBreaker_State(t *testing.T) {
 func TestCircuitBreaker_recordSuccess(t *testing.T) {
 	t.Parallel()
 
+	now := time.Now()
+
 	tests := []struct {
 		name             string
-		setup            func() *CircuitBreaker
+		breaker          *CircuitBreaker
 		wantState        State
 		wantFailureCount int
 	}{
 		{
 			name: "closed: stays closed",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
+			breaker: &CircuitBreaker{
+				state:            StateClosed,
+				failureThreshold: 3,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState:        StateClosed,
 			wantFailureCount: 0,
 		},
 		{
 			name: "closed: resets failure count",
-			setup: func() *CircuitBreaker {
-				breaker := NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
-				breaker.recordFailure()
-				breaker.recordFailure()
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateClosed,
+				failureThreshold: 3,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				failureCount:     2,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState:        StateClosed,
 			wantFailureCount: 0,
 		},
 		{
 			name: "half-open: closes after reaching success threshold",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				breaker.State() // transition to half-open
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateHalfOpen,
+				failureThreshold: 1,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState:        StateClosed,
 			wantFailureCount: 0,
 		},
 		{
 			name: "half-open: stays half-open before reaching success threshold",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 3, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				breaker.State() // transition to half-open
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateHalfOpen,
+				failureThreshold: 1,
+				successThreshold: 3,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState:        StateHalfOpen,
 			wantFailureCount: 0,
@@ -204,10 +224,9 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			breaker := tt.setup()
-			breaker.recordSuccess()
-			assert.Equal(t, tt.wantState, breaker.State())
-			assert.Equal(t, tt.wantFailureCount, breaker.failureCount)
+			tt.breaker.recordSuccess()
+			assert.Equal(t, tt.wantState, tt.breaker.State())
+			assert.Equal(t, tt.wantFailureCount, tt.breaker.failureCount)
 		})
 	}
 }
@@ -215,38 +234,50 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 func TestCircuitBreaker_recordFailure(t *testing.T) {
 	t.Parallel()
 
+	now := time.Now()
+
 	tests := []struct {
 		name      string
-		setup     func() *CircuitBreaker
+		breaker   *CircuitBreaker
 		wantState State
 	}{
 		{
 			name: "closed: stays closed before reaching threshold",
-			setup: func() *CircuitBreaker {
-				return NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
+			breaker: &CircuitBreaker{
+				state:            StateClosed,
+				failureThreshold: 3,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateClosed,
 		},
 		{
 			name: "closed: opens after reaching threshold",
-			setup: func() *CircuitBreaker {
-				breaker := NewCircuitBreaker(2, 1, 5*time.Second, isServerError)
-				breaker.recordFailure()
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateClosed,
+				failureThreshold: 2,
+				successThreshold: 1,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				failureCount:     1,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateOpen,
 		},
 		{
 			name: "half-open: reopens immediately",
-			setup: func() *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 3, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				breaker.State() // transition to half-open
-				return breaker
+			breaker: &CircuitBreaker{
+				state:            StateHalfOpen,
+				failureThreshold: 1,
+				successThreshold: 3,
+				recoverDuration:  5 * time.Second,
+				isFailure:        isServerError,
+				now:              func() time.Time { return now },
+				onStateChange:    func(from, to State) {},
 			},
 			wantState: StateOpen,
 		},
@@ -256,15 +287,16 @@ func TestCircuitBreaker_recordFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			breaker := tt.setup()
-			breaker.recordFailure()
-			assert.Equal(t, tt.wantState, breaker.State())
+			tt.breaker.recordFailure()
+			assert.Equal(t, tt.wantState, tt.breaker.State())
 		})
 	}
 }
 
 func TestCircuitBreaker_onStateChange(t *testing.T) {
 	t.Parallel()
+
+	now := time.Now()
 
 	type transition struct {
 		from State
@@ -273,53 +305,71 @@ func TestCircuitBreaker_onStateChange(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		setup           func(cb func(from, to State)) *CircuitBreaker
+		breaker         func(cb func(from, to State)) *CircuitBreaker
 		action          func(breaker *CircuitBreaker)
 		wantTransitions []transition
 	}{
 		{
 			name: "closed to open fires callback",
-			setup: func(cb func(from, to State)) *CircuitBreaker {
-				return NewCircuitBreaker(1, 1, 5*time.Second, isServerError, WithOnStateChange(cb))
+			breaker: func(cb func(from, to State)) *CircuitBreaker {
+				return &CircuitBreaker{
+					state:            StateClosed,
+					failureThreshold: 1,
+					successThreshold: 1,
+					recoverDuration:  5 * time.Second,
+					isFailure:        isServerError,
+					now:              func() time.Time { return now },
+					onStateChange:    cb,
+				}
 			},
 			action:          func(breaker *CircuitBreaker) { breaker.recordFailure() },
 			wantTransitions: []transition{{from: StateClosed, to: StateOpen}},
 		},
 		{
 			name: "open to half-open fires callback",
-			setup: func(cb func(from, to State)) *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-					WithOnStateChange(cb),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				return breaker
+			breaker: func(cb func(from, to State)) *CircuitBreaker {
+				return &CircuitBreaker{
+					state:            StateOpen,
+					failureThreshold: 1,
+					successThreshold: 1,
+					recoverDuration:  5 * time.Second,
+					isFailure:        isServerError,
+					lastFailure:      now.Add(-6 * time.Second),
+					now:              func() time.Time { return now },
+					onStateChange:    cb,
+				}
 			},
 			action:          func(breaker *CircuitBreaker) { breaker.State() },
-			wantTransitions: []transition{{from: StateClosed, to: StateOpen}, {from: StateOpen, to: StateHalfOpen}},
+			wantTransitions: []transition{{from: StateOpen, to: StateHalfOpen}},
 		},
 		{
 			name: "half-open to closed fires callback",
-			setup: func(cb func(from, to State)) *CircuitBreaker {
-				now := time.Now()
-				breaker := NewCircuitBreaker(1, 1, 5*time.Second, isServerError,
-					WithNowFunc(func() time.Time { return now }),
-					WithOnStateChange(cb),
-				)
-				breaker.recordFailure()
-				now = now.Add(6 * time.Second)
-				breaker.State() // transition to half-open
-				return breaker
+			breaker: func(cb func(from, to State)) *CircuitBreaker {
+				return &CircuitBreaker{
+					state:            StateHalfOpen,
+					failureThreshold: 1,
+					successThreshold: 1,
+					recoverDuration:  5 * time.Second,
+					isFailure:        isServerError,
+					now:              func() time.Time { return now },
+					onStateChange:    cb,
+				}
 			},
 			action:          func(breaker *CircuitBreaker) { breaker.recordSuccess() },
-			wantTransitions: []transition{{from: StateClosed, to: StateOpen}, {from: StateOpen, to: StateHalfOpen}, {from: StateHalfOpen, to: StateClosed}},
+			wantTransitions: []transition{{from: StateHalfOpen, to: StateClosed}},
 		},
 		{
 			name: "no callback when state unchanged",
-			setup: func(cb func(from, to State)) *CircuitBreaker {
-				return NewCircuitBreaker(5, 1, time.Second, isServerError, WithOnStateChange(cb))
+			breaker: func(cb func(from, to State)) *CircuitBreaker {
+				return &CircuitBreaker{
+					state:            StateClosed,
+					failureThreshold: 5,
+					successThreshold: 1,
+					recoverDuration:  time.Second,
+					isFailure:        isServerError,
+					now:              func() time.Time { return now },
+					onStateChange:    cb,
+				}
 			},
 			action:          func(breaker *CircuitBreaker) { breaker.recordFailure() },
 			wantTransitions: nil,
@@ -331,7 +381,7 @@ func TestCircuitBreaker_onStateChange(t *testing.T) {
 			t.Parallel()
 
 			var transitions []transition
-			breaker := tt.setup(func(from, to State) {
+			breaker := tt.breaker(func(from, to State) {
 				transitions = append(transitions, transition{from: from, to: to})
 			})
 
