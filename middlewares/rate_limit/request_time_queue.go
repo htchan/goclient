@@ -87,11 +87,5 @@ func (q *Queue) Resize(newSize int) {
 		newSize = 1
 	}
 
-	// drop oldest items if count exceeds new size
-	for q.count > newSize {
-		q.startIndex = (q.startIndex + 1) % q.maxSize
-		q.count--
-	}
-
 	q.size = newSize
 }
