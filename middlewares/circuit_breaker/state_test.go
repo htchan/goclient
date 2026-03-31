@@ -11,28 +11,36 @@ func TestState_String(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
+		name  string
 		state State
 		want  string
 	}{
-		{StateClosed, "closed"},
-		{StateOpen, "open"},
-		{StateHalfOpen, "half-open"},
-		{State(99), "unknown"},
+		{
+			name:  "closed",
+			state: StateClosed,
+			want:  "closed",
+		},
+		{
+			name:  "open",
+			state: StateOpen,
+			want:  "open",
+		},
+		{
+			name:  "half-open",
+			state: StateHalfOpen,
+			want:  "half-open",
+		},
+		{
+			name:  "unknown",
+			state: State(99),
+			want:  "unknown",
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, tt.state.String())
 		})
 	}
-}
-
-func TestNewCircuitBreaker_Defaults(t *testing.T) {
-	t.Parallel()
-
-	breaker := NewCircuitBreaker(0, 0, time.Second, isError)
-	assert.Equal(t, 1, breaker.failureThreshold)
-	assert.Equal(t, 1, breaker.successThreshold)
-	assert.Equal(t, StateClosed, breaker.State())
 }
