@@ -20,319 +20,266 @@ func isServerError(_ *http.Request, resp *http.Response, err error) bool {
 	return err != nil || (resp != nil && resp.StatusCode >= 500)
 }
 
-func TestCircuitBreaker_ClosedToOpen(t *testing.T) {
-	t.Parallel()
+// step describes a single action in a circuit breaker test scenario.
+type step struct {
+	// action to perform
+	action string // "request_success", "request_fail", "request_error", "advance_time"
 
-	breaker := NewCircuitBreaker(3, 1, time.Second, isServerError)
+	// for advance_time
+	duration time.Duration
 
-	failingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer failingServer.Close()
+	// expected state after this step
+	wantState State
 
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
-
-	// First 2 failures: circuit stays closed
-	for i := range 2 {
-		req, _ := http.NewRequest(http.MethodGet, failingServer.URL, nil)
-		resp, err := cli.Do(req)
-		assert.NoError(t, err, "request %d", i)
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, "request %d", i)
-		assert.Equal(t, StateClosed, breaker.State(), "request %d", i)
-	}
-
-	// 3rd failure: circuit opens
-	req, _ := http.NewRequest(http.MethodGet, failingServer.URL, nil)
-	resp, err := cli.Do(req)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	assert.Equal(t, StateOpen, breaker.State())
-
-	// 4th request: rejected immediately
-	req, _ = http.NewRequest(http.MethodGet, failingServer.URL, nil)
-	resp, err = cli.Do(req)
-	assert.Nil(t, resp)
-	assert.ErrorIs(t, err, ErrCircuitOpen)
+	// expected response (for request steps)
+	wantStatus    int  // 0 means don't check
+	wantErr       error
+	wantNilResp   bool
 }
 
-func TestCircuitBreaker_OpenToHalfOpen(t *testing.T) {
+func TestCircuitBreakerMiddleware(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
-	mu := sync.Mutex{}
-	mockNow := func() time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		return now
-	}
-	advanceTime := func(d time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		now = now.Add(d)
-	}
-
-	breaker := NewCircuitBreaker(1, 1, 5*time.Second, isError, WithNowFunc(mockNow))
-
-	failingRequester := func(_ *http.Request) (*http.Response, error) {
-		return nil, errors.New("connection refused")
-	}
-
-	middleware := NewCircuitBreakerMiddleware(breaker)
-	wrapped := middleware(failingRequester)
-
-	// Trigger failure → open
-	req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
-	_, err := wrapped(req)
-	assert.Error(t, err)
-	assert.Equal(t, StateOpen, breaker.State())
-
-	// Still open before recoverDuration
-	advanceTime(3 * time.Second)
-	assert.Equal(t, StateOpen, breaker.State())
-
-	// After recoverDuration → half-open
-	advanceTime(3 * time.Second)
-	assert.Equal(t, StateHalfOpen, breaker.State())
-}
-
-func TestCircuitBreaker_HalfOpenToClose(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	mu := sync.Mutex{}
-	mockNow := func() time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		return now
-	}
-	advanceTime := func(d time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		now = now.Add(d)
-	}
-
-	breaker := NewCircuitBreaker(1, 2, 5*time.Second, isServerError, WithNowFunc(mockNow))
-
-	callCount := 0
-	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer successServer.Close()
-
-	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer failServer.Close()
-
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
-
-	// Trigger open
-	req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateOpen, breaker.State())
-
-	// Advance past recoverDuration → half-open
-	advanceTime(6 * time.Second)
-	assert.Equal(t, StateHalfOpen, breaker.State())
-
-	// First success in half-open (need 2 to close)
-	req, _ = http.NewRequest(http.MethodGet, successServer.URL, nil)
-	resp, err := cli.Do(req)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, StateHalfOpen, breaker.State())
-
-	// Second success → closes circuit
-	req, _ = http.NewRequest(http.MethodGet, successServer.URL, nil)
-	resp, err = cli.Do(req)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, StateClosed, breaker.State())
-	assert.Equal(t, 2, callCount)
-}
-
-func TestCircuitBreaker_HalfOpenToOpen(t *testing.T) {
-	t.Parallel()
-
-	now := time.Now()
-	mu := sync.Mutex{}
-	mockNow := func() time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		return now
-	}
-	advanceTime := func(d time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		now = now.Add(d)
+	tests := []struct {
+		name             string
+		failureThreshold int
+		successThreshold int
+		recoverDuration  time.Duration
+		isFailure        goclient.ResultValidator
+		useMockTime      bool
+		steps            []step
+	}{
+		{
+			name:             "closed to open after reaching failure threshold",
+			failureThreshold: 3,
+			successThreshold: 1,
+			recoverDuration:  time.Second,
+			isFailure:        isServerError,
+			steps: []step{
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateOpen, wantNilResp: true, wantErr: ErrCircuitOpen},
+			},
+		},
+		{
+			name:             "open to half-open after recover duration",
+			failureThreshold: 1,
+			successThreshold: 1,
+			recoverDuration:  5 * time.Second,
+			isFailure:        isError,
+			useMockTime:      true,
+			steps: []step{
+				{action: "request_error", wantState: StateOpen, wantNilResp: true},
+				{action: "advance_time", duration: 3 * time.Second, wantState: StateOpen},
+				{action: "advance_time", duration: 3 * time.Second, wantState: StateHalfOpen},
+			},
+		},
+		{
+			name:             "half-open to closed after success threshold",
+			failureThreshold: 1,
+			successThreshold: 2,
+			recoverDuration:  5 * time.Second,
+			isFailure:        isServerError,
+			useMockTime:      true,
+			steps: []step{
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+				{action: "advance_time", duration: 6 * time.Second, wantState: StateHalfOpen},
+				{action: "request_success", wantState: StateHalfOpen, wantStatus: http.StatusOK},
+				{action: "request_success", wantState: StateClosed, wantStatus: http.StatusOK},
+			},
+		},
+		{
+			name:             "half-open to open on failure",
+			failureThreshold: 1,
+			successThreshold: 3,
+			recoverDuration:  5 * time.Second,
+			isFailure:        isServerError,
+			useMockTime:      true,
+			steps: []step{
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+				{action: "advance_time", duration: 6 * time.Second, wantState: StateHalfOpen},
+				{action: "request_success", wantState: StateHalfOpen, wantStatus: http.StatusOK},
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+			},
+		},
+		{
+			name:             "success resets failure count",
+			failureThreshold: 3,
+			successThreshold: 1,
+			recoverDuration:  time.Second,
+			isFailure:        isServerError,
+			steps: []step{
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_success", wantState: StateClosed, wantStatus: http.StatusOK},
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+			},
+		},
+		{
+			name:             "full lifecycle: closed → open → half-open → closed",
+			failureThreshold: 3,
+			successThreshold: 1,
+			recoverDuration:  2 * time.Second,
+			isFailure:        isServerError,
+			useMockTime:      true,
+			steps: []step{
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateClosed, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateOpen, wantStatus: http.StatusInternalServerError},
+				{action: "request_fail", wantState: StateOpen, wantNilResp: true, wantErr: ErrCircuitOpen},
+				{action: "advance_time", duration: 3 * time.Second, wantState: StateHalfOpen},
+				{action: "request_success", wantState: StateClosed, wantStatus: http.StatusOK},
+			},
+		},
 	}
 
-	breaker := NewCircuitBreaker(1, 3, 5*time.Second, isServerError, WithNowFunc(mockNow))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer failServer.Close()
+			now := time.Now()
+			mu := sync.Mutex{}
+			mockNow := func() time.Time {
+				mu.Lock()
+				defer mu.Unlock()
+				return now
+			}
+			advanceTime := func(d time.Duration) {
+				mu.Lock()
+				defer mu.Unlock()
+				now = now.Add(d)
+			}
 
-	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer successServer.Close()
+			var opts []Option
+			if tt.useMockTime {
+				opts = append(opts, WithNowFunc(mockNow))
+			}
 
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
+			breaker := NewCircuitBreaker(
+				tt.failureThreshold,
+				tt.successThreshold,
+				tt.recoverDuration,
+				tt.isFailure,
+				opts...,
+			)
 
-	// Trigger open
-	req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateOpen, breaker.State())
+			successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer successServer.Close()
 
-	// Advance past recoverDuration → half-open
-	advanceTime(6 * time.Second)
-	assert.Equal(t, StateHalfOpen, breaker.State())
+			failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer failServer.Close()
 
-	// One success in half-open
-	req, _ = http.NewRequest(http.MethodGet, successServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateHalfOpen, breaker.State())
+			errorRequester := func(_ *http.Request) (*http.Response, error) {
+				return nil, errors.New("connection refused")
+			}
 
-	// Then a failure → back to open
-	req, _ = http.NewRequest(http.MethodGet, failServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateOpen, breaker.State())
-}
+			cli := goclient.NewClient(
+				goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
+			)
+			errorCli := goclient.NewClient(
+				goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
+				goclient.WithRequester(errorRequester),
+			)
 
-func TestCircuitBreaker_SuccessResetsFailureCount(t *testing.T) {
-	t.Parallel()
+			for i, s := range tt.steps {
+				switch s.action {
+				case "request_success":
+					req, _ := http.NewRequest(http.MethodGet, successServer.URL, nil)
+					resp, err := cli.Do(req)
+					if s.wantErr != nil {
+						assert.ErrorIs(t, err, s.wantErr, "step %d", i)
+					} else {
+						assert.NoError(t, err, "step %d", i)
+					}
+					if s.wantNilResp {
+						assert.Nil(t, resp, "step %d", i)
+					} else if s.wantStatus != 0 {
+						assert.Equal(t, s.wantStatus, resp.StatusCode, "step %d", i)
+					}
 
-	breaker := NewCircuitBreaker(3, 1, time.Second, isServerError)
+				case "request_fail":
+					req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
+					resp, err := cli.Do(req)
+					if s.wantErr != nil {
+						assert.ErrorIs(t, err, s.wantErr, "step %d", i)
+					} else {
+						assert.NoError(t, err, "step %d", i)
+					}
+					if s.wantNilResp {
+						assert.Nil(t, resp, "step %d", i)
+					} else if s.wantStatus != 0 {
+						assert.Equal(t, s.wantStatus, resp.StatusCode, "step %d", i)
+					}
 
-	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer failServer.Close()
+				case "request_error":
+					req, _ := http.NewRequest(http.MethodGet, "http://example.com", nil)
+					resp, err := errorCli.Do(req)
+					assert.Error(t, err, "step %d", i)
+					if s.wantNilResp {
+						assert.Nil(t, resp, "step %d", i)
+					}
 
-	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer successServer.Close()
+				case "advance_time":
+					advanceTime(s.duration)
+				}
 
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
-
-	// 2 failures
-	for range 2 {
-		req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
-		cli.Do(req)
-	}
-	assert.Equal(t, StateClosed, breaker.State())
-
-	// 1 success resets failure count
-	req, _ := http.NewRequest(http.MethodGet, successServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateClosed, breaker.State())
-
-	// 2 more failures should NOT open (count was reset)
-	for range 2 {
-		req, _ := http.NewRequest(http.MethodGet, failServer.URL, nil)
-		cli.Do(req)
-	}
-	assert.Equal(t, StateClosed, breaker.State())
-
-	// 3rd consecutive failure opens
-	req, _ = http.NewRequest(http.MethodGet, failServer.URL, nil)
-	cli.Do(req)
-	assert.Equal(t, StateOpen, breaker.State())
-}
-
-func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
-
-	breaker := NewCircuitBreaker(100, 1, time.Second, isServerError)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
-
-	var wg sync.WaitGroup
-	for range 200 {
-		wg.Go(func() {
-			req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-			cli.Do(req)
+				assert.Equal(t, s.wantState, breaker.State(), "step %d: expected state %s", i, s.wantState)
+			}
 		})
 	}
-	wg.Wait()
-
-	// Should be open after 100+ failures
-	assert.Equal(t, StateOpen, breaker.State())
 }
 
-func TestNewCircuitBreakerMiddleware_Integration(t *testing.T) {
+func TestCircuitBreakerMiddleware_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
-	now := time.Now()
-	mu := sync.Mutex{}
-	mockNow := func() time.Time {
-		mu.Lock()
-		defer mu.Unlock()
-		return now
+	tests := []struct {
+		name             string
+		failureThreshold int
+		goroutines       int
+		serverStatus     int
+		wantState        State
+	}{
+		{
+			name:             "opens after threshold with concurrent failures",
+			failureThreshold: 100,
+			goroutines:       200,
+			serverStatus:     http.StatusInternalServerError,
+			wantState:        StateOpen,
+		},
 	}
-	advanceTime := func(d time.Duration) {
-		mu.Lock()
-		defer mu.Unlock()
-		now = now.Add(d)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			breaker := NewCircuitBreaker(tt.failureThreshold, 1, time.Second, isServerError)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.serverStatus)
+			}))
+			defer server.Close()
+
+			cli := goclient.NewClient(
+				goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
+			)
+
+			var wg sync.WaitGroup
+			for range tt.goroutines {
+				wg.Go(func() {
+					req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+					cli.Do(req)
+				})
+			}
+			wg.Wait()
+
+			assert.Equal(t, tt.wantState, breaker.State())
+		})
 	}
-
-	requestCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		if requestCount <= 3 {
-			w.WriteHeader(http.StatusInternalServerError)
-		} else {
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	defer server.Close()
-
-	breaker := NewCircuitBreaker(3, 1, 2*time.Second, isServerError, WithNowFunc(mockNow))
-	cli := goclient.NewClient(
-		goclient.WithMiddlewares(NewCircuitBreakerMiddleware(breaker)),
-	)
-
-	// Phase 1: 3 failures → open
-	for range 3 {
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-		resp, err := cli.Do(req)
-		assert.NoError(t, err)
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	}
-	assert.Equal(t, StateOpen, breaker.State())
-	assert.Equal(t, 3, requestCount)
-
-	// Phase 2: requests rejected while open
-	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-	_, err := cli.Do(req)
-	assert.ErrorIs(t, err, ErrCircuitOpen)
-	assert.Equal(t, 3, requestCount) // no additional server calls
-
-	// Phase 3: advance time → half-open → success → closed
-	advanceTime(3 * time.Second)
-	req, _ = http.NewRequest(http.MethodGet, server.URL, nil)
-	resp, err := cli.Do(req)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Equal(t, StateClosed, breaker.State())
-	assert.Equal(t, 4, requestCount)
 }
