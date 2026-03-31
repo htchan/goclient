@@ -23,7 +23,11 @@ func TestNewCircuitBreaker(t *testing.T) {
 		recoverDuration      time.Duration
 		wantFailureThreshold int
 		wantSuccessThreshold int
+		wantRecoverDuration  time.Duration
 		wantState            State
+		wantFailureCount     int
+		wantSuccessCount     int
+		wantLastFailure      time.Time
 	}{
 		{
 			name:                 "defaults: zero thresholds clamped to 1",
@@ -32,7 +36,11 @@ func TestNewCircuitBreaker(t *testing.T) {
 			recoverDuration:      time.Second,
 			wantFailureThreshold: 1,
 			wantSuccessThreshold: 1,
+			wantRecoverDuration:  time.Second,
 			wantState:            StateClosed,
+			wantFailureCount:     0,
+			wantSuccessCount:     0,
+			wantLastFailure:      time.Time{},
 		},
 		{
 			name:                 "defaults: negative thresholds clamped to 1",
@@ -41,7 +49,11 @@ func TestNewCircuitBreaker(t *testing.T) {
 			recoverDuration:      time.Second,
 			wantFailureThreshold: 1,
 			wantSuccessThreshold: 1,
+			wantRecoverDuration:  time.Second,
 			wantState:            StateClosed,
+			wantFailureCount:     0,
+			wantSuccessCount:     0,
+			wantLastFailure:      time.Time{},
 		},
 		{
 			name:                 "custom thresholds preserved",
@@ -50,7 +62,11 @@ func TestNewCircuitBreaker(t *testing.T) {
 			recoverDuration:      30 * time.Second,
 			wantFailureThreshold: 5,
 			wantSuccessThreshold: 3,
+			wantRecoverDuration:  30 * time.Second,
 			wantState:            StateClosed,
+			wantFailureCount:     0,
+			wantSuccessCount:     0,
+			wantLastFailure:      time.Time{},
 		},
 	}
 
@@ -61,7 +77,14 @@ func TestNewCircuitBreaker(t *testing.T) {
 			breaker := NewCircuitBreaker(tt.failureThreshold, tt.successThreshold, tt.recoverDuration, isServerError)
 			assert.Equal(t, tt.wantFailureThreshold, breaker.failureThreshold)
 			assert.Equal(t, tt.wantSuccessThreshold, breaker.successThreshold)
+			assert.Equal(t, tt.wantRecoverDuration, breaker.recoverDuration)
 			assert.Equal(t, tt.wantState, breaker.State())
+			assert.Equal(t, tt.wantFailureCount, breaker.failureCount)
+			assert.Equal(t, tt.wantSuccessCount, breaker.successCount)
+			assert.Equal(t, tt.wantLastFailure, breaker.lastFailure)
+			assert.NotNil(t, breaker.now)
+			assert.NotNil(t, breaker.isFailure)
+			assert.NotNil(t, breaker.onStateChange)
 		})
 	}
 }
