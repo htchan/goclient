@@ -144,16 +144,18 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		setup     func() *CircuitBreaker
-		wantState State
+		name             string
+		setup            func() *CircuitBreaker
+		wantState        State
+		wantFailureCount int
 	}{
 		{
 			name: "closed: stays closed",
 			setup: func() *CircuitBreaker {
 				return NewCircuitBreaker(3, 1, 5*time.Second, isServerError)
 			},
-			wantState: StateClosed,
+			wantState:        StateClosed,
+			wantFailureCount: 0,
 		},
 		{
 			name: "closed: resets failure count",
@@ -163,7 +165,8 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 				breaker.recordFailure()
 				return breaker
 			},
-			wantState: StateClosed,
+			wantState:        StateClosed,
+			wantFailureCount: 0,
 		},
 		{
 			name: "half-open: closes after reaching success threshold",
@@ -177,7 +180,8 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 				breaker.State() // transition to half-open
 				return breaker
 			},
-			wantState: StateClosed,
+			wantState:        StateClosed,
+			wantFailureCount: 0,
 		},
 		{
 			name: "half-open: stays half-open before reaching success threshold",
@@ -191,7 +195,8 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 				breaker.State() // transition to half-open
 				return breaker
 			},
-			wantState: StateHalfOpen,
+			wantState:        StateHalfOpen,
+			wantFailureCount: 0,
 		},
 	}
 
@@ -202,6 +207,7 @@ func TestCircuitBreaker_recordSuccess(t *testing.T) {
 			breaker := tt.setup()
 			breaker.recordSuccess()
 			assert.Equal(t, tt.wantState, breaker.State())
+			assert.Equal(t, tt.wantFailureCount, breaker.failureCount)
 		})
 	}
 }
