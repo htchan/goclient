@@ -11,7 +11,7 @@ on:
     - cron: "0 0 1-7 * 6"
 
 env:
-  GO_VERSION: 1.26.2
+  GO_VERSION: 1.26.3
 
 jobs:
   security-scan:
